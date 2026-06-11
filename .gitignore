@@ -5,3 +5,4 @@ __pycache__/
 runs/
 .env
 .claude/settings.local.json
+.idea/
