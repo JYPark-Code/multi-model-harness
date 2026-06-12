@@ -55,7 +55,8 @@ def collect_metrics(run_dir: Path, exit_code: int, wall_s: float, diff: str) -> 
 def run_once(i: int, repo: Path, runs_dir: Path, patch: Path, task: str) -> dict:
     if sh(["git", "-C", str(repo), "status", "--porcelain"]).strip():
         raise RuntimeError("testbed 작업 트리가 clean하지 않다 — 중단")
-    sh(["git", "-C", str(repo), "switch", "-c", "harness-run"])
+    # msa를 명시적 분기 기준으로 — 현재 HEAD가 어디든(전용 클론이라도 사람이 만질 수 있다) 항상 같은 베이스
+    sh(["git", "-C", str(repo), "switch", "-c", "harness-run", "msa"])
     try:
         sh(["git", "-C", str(repo), "apply", str(patch)])
         sh(["git", "-C", str(repo), "commit", "-am", f"tasks: L1-5 결함 주입 (run {i})"])

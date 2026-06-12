@@ -13,7 +13,7 @@
 
 ## 실행 프로토콜
 
-- testbed는 **`harness-run` 일회용 브랜치**(main에서 분기)에서 돌린다 — main/msa와 절대 안 섞인다.
+- testbed는 **`harness-run` 일회용 브랜치**(msa에서 분기)에서 돌린다 — msa와 절대 안 섞인다.
 - 시작 전 작업 트리 clean 확인, 종료 후 diff는 산출물(runs/)로만 보존하고 브랜치는 리셋.
 - 게이트: `.\gradlew.bat test` (통합 테스트 25개, docker compose 인프라 선행).
 - 같은 태스크를 조건별 N회 반복한다 — 모델 출력은 비결정적이므로 1회 결과는 측정이 아니다
