@@ -47,9 +47,8 @@ pip install -r requirements.txt
 # 하네스 자체 검증 (API 키 불필요 — fake 어댑터)
 pytest
 
-# 실제 실행 (키 필요)
-set OPENAI_API_KEY=...
-set ANTHROPIC_API_KEY=...
+# 실제 실행 (키 필요) — .env에 API 키 기재 (config.py가 임포트 시점에 로드)
+copy .env.example .env
 python -m orchestrator.runner "주문 조회 API에 페이징을 추가하라"
 ```
 

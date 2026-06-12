@@ -3,6 +3,12 @@ from dataclasses import dataclass, field
 from pathlib import Path
 import os
 
+from dotenv import load_dotenv
+
+# .env의 API 키·오버라이드를 모듈 임포트 시점에 환경 변수로 — 아래 os.environ.get과
+# SDK 기본 생성자(ANTHROPIC_API_KEY/OPENAI_API_KEY 자동 탐색)보다 먼저 실행돼야 한다
+load_dotenv(Path(__file__).parent / ".env")
+
 
 @dataclass
 class HarnessConfig:
