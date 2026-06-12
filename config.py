@@ -17,6 +17,11 @@ class HarnessConfig:
     review_model: str = "claude-opus-4-8"
     planning_model: str = "gpt-5.1"  # GPT 플래그십 — OpenAIClient 설정값
 
+    # Claude 백엔드: "cli" = Claude Code 구독 인증(API 크레딧 불필요, 기본),
+    #                "api" = ANTHROPIC_API_KEY 필요 (implement/review_model 사용)
+    claude_backend: str = os.environ.get("HARNESS_CLAUDE_BACKEND", "cli")
+    cli_model: str = os.environ.get("HARNESS_CLI_MODEL", "")  # 빈 값 = CLI 기본 모델
+
     # 티키타카가 안 새게 막는 방파제 (Constraint design)
     max_planning_turns: int = 4      # 생성↔비평 왕복 상한
     max_review_turns: int = 3        # 구현↔리뷰 왕복 상한

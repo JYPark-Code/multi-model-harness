@@ -47,10 +47,21 @@ pip install -r requirements.txt
 # 하네스 자체 검증 (API 키 불필요 — fake 어댑터)
 pytest
 
-# 실제 실행 (키 필요) — .env에 API 키 기재 (config.py가 임포트 시점에 로드)
+# 실제 실행 — .env에 OPENAI_API_KEY 기재 (config.py가 임포트 시점에 로드)
+# Claude는 기본적으로 Claude Code CLI(구독 인증)를 백엔드로 쓴다 → Anthropic API 크레딧 불필요
 copy .env.example .env
 python -m orchestrator.runner "주문 조회 API에 페이징을 추가하라"
 ```
+
+### Claude 백엔드 두 가지
+
+| 백엔드 | 인증 | critic | implementer |
+|---|---|---|---|
+| `cli` (기본) | Claude Code 구독 (`/login`) | `claude -p` 텍스트 전용 | CLI에 구현 위임 — CLI 내장 도구가 target repo 수정 |
+| `api` | `ANTHROPIC_API_KEY` | Messages API | 하네스 tool loop + MCP 파일시스템 서버 |
+
+`HARNESS_CLAUDE_BACKEND=api`로 전환. cli 모드는 inner tool loop 소유권을 CLI에 위임하는
+타협이지만(설계 문서 5절 참고), 단계 상태머신·구조화 핸드오프·검증 게이트는 하네스가 소유한다.
 
 대상 레포(testbed)는 `config.py`의 `target_repo` — 기본값은 형제 디렉터리의
 [event-driven-commerce](https://github.com/JYPark-Code/event-driven-commerce) (1000 TPS 실증 프로젝트).

@@ -44,21 +44,36 @@ async def main() -> int:
     args = parser.parse_args()
 
     # 실제 어댑터는 여기서만 임포트 — 키 없이도 fake 기반 테스트는 돌게 (의존 격리)
-    from adapters.claude_client import ClaudeClient
+    from contextlib import nullcontext
+
     from adapters.openai_client import OpenAIClient
-    from orchestrator.tools import MCPToolExecutor
 
     cfg = HarnessConfig()
     store = ArtifactStore(cfg.runs_dir)
     print(f"[harness] run dir: {store.run_dir}")
     print(f"[harness] target:  {cfg.target_repo}")
+    print(f"[harness] claude:  {cfg.claude_backend} backend")
 
-    async with MCPToolExecutor(cfg.target_repo) as executor:
+    if cfg.claude_backend == "cli":
+        # Claude Code 구독 인증 — implementer는 CLI에 위임, MCP executor 불필요
+        from adapters.claude_cli import ClaudeCLIAgent, ClaudeCLIClient
+        from orchestrator.tools import LocalToolExecutor
+        critic = ClaudeCLIClient(cfg.cli_model)
+        implementer = ClaudeCLIAgent(cfg.target_repo, cfg.cli_model)
+        executor_cm = nullcontext(LocalToolExecutor({}, []))
+    else:
+        from adapters.claude_client import ClaudeClient
+        from orchestrator.tools import MCPToolExecutor
+        critic = ClaudeClient(cfg.review_model)
+        implementer = ClaudeClient(cfg.implement_model)
+        executor_cm = MCPToolExecutor(cfg.target_repo)
+
+    async with executor_cm as executor:
         report = await run_pipeline(
             cfg, store, args.task,
             planner=OpenAIClient(cfg.planning_model),
-            critic=ClaudeClient(cfg.review_model),
-            implementer=ClaudeClient(cfg.implement_model),
+            critic=critic,
+            implementer=implementer,
             reviewer=OpenAIClient(cfg.planning_model),
             executor=executor,
             diff_fn=partial(git_diff, cfg.target_repo),

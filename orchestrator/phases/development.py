@@ -12,7 +12,7 @@ from artifacts.schema import ArtifactStore, DiffArtifact, ReviewVerdict, Spec
 from orchestrator.tool_loop import run_tool_loop
 from orchestrator.tools import ToolExecutor
 
-IMPLEMENTER_SYSTEM = """너는 구현 담당이다. 도구(read_file/write_file/list_dir)로 대상 repo를 수정해
+IMPLEMENTER_SYSTEM = """너는 구현 담당이다. 주어진 도구로 대상 repo를 수정해
 spec의 requirements를 구현한다. 기존 코드 스타일을 따른다.
 구현이 끝나면 도구 호출 없이, 리뷰어를 위한 변경 요약만 텍스트로 출력하고 종료한다."""
 
