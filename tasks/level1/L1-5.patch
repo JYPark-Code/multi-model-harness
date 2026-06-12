@@ -1,0 +1,12 @@
+diff --git a/order/src/main/java/com/jypark/tps1000/order/OrderEventConsumer.java b/order/src/main/java/com/jypark/tps1000/order/OrderEventConsumer.java
+index 7773e08..d84908b 100644
+--- a/order/src/main/java/com/jypark/tps1000/order/OrderEventConsumer.java
++++ b/order/src/main/java/com/jypark/tps1000/order/OrderEventConsumer.java
+@@ -53,7 +53,6 @@ public class OrderEventConsumer {
+                 throw new BatchListenerFailedException("주문 후속 처리 실패", ex, i);
+             }
+             Order order = Order.fromEvent(event.orderKey(), event.productId(), event.quantity());
+-            order.complete();
+             pending.add(order);
+         }
+         orderJdbcRepository.insertAllIgnoreDuplicates(pending);
