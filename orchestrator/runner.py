@@ -58,23 +58,24 @@ async def main() -> int:
         # Claude Code 구독 인증 — implementer는 CLI에 위임, MCP executor 불필요
         from adapters.claude_cli import ClaudeCLIAgent, ClaudeCLIClient
         from orchestrator.tools import LocalToolExecutor
-        critic = ClaudeCLIClient(cfg.cli_model)
-        implementer = ClaudeCLIAgent(cfg.target_repo, cfg.cli_model)
+        critic = ClaudeCLIClient(cfg.cli_model, timeout=cfg.critic_timeout_s)
+        implementer = ClaudeCLIAgent(cfg.target_repo, cfg.cli_model,
+                                     timeout=cfg.implement_timeout_s)
         executor_cm = nullcontext(LocalToolExecutor({}, []))
     else:
         from adapters.claude_client import ClaudeClient
         from orchestrator.tools import MCPToolExecutor
-        critic = ClaudeClient(cfg.review_model)
-        implementer = ClaudeClient(cfg.implement_model)
+        critic = ClaudeClient(cfg.review_model, timeout=cfg.critic_timeout_s)
+        implementer = ClaudeClient(cfg.implement_model, timeout=cfg.implement_timeout_s)
         executor_cm = MCPToolExecutor(cfg.target_repo)
 
     async with executor_cm as executor:
         report = await run_pipeline(
             cfg, store, args.task,
-            planner=OpenAIClient(cfg.planning_model),
+            planner=OpenAIClient(cfg.planning_model, timeout=cfg.planner_timeout_s),
             critic=critic,
             implementer=implementer,
-            reviewer=OpenAIClient(cfg.planning_model),
+            reviewer=OpenAIClient(cfg.planning_model, timeout=cfg.planner_timeout_s),
             executor=executor,
             diff_fn=partial(git_diff, cfg.target_repo),
             gate_fn=partial(run_gate, cfg.test_command, cfg.target_repo))

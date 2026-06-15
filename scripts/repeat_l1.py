@@ -141,12 +141,13 @@ def run_once(i: int, defect_id: str, repo: Path, runs_dir: Path,
 
 def tally_of(results: list[dict]) -> dict:
     t = {k: sum(1 for m in results if m.get("outcome") == k)
-         for k in ("pass", "gate_fail", "harness_abort")}
+         for k in ("pass", "gate_fail", "harness_abort", "infra_fail")}
     completed = t["pass"] + t["gate_fail"]
     done = [m for m in results if m.get("outcome") == "pass"]
     return {
         "n": len(results),
         "pass": t["pass"], "gate_fail": t["gate_fail"], "harness_abort": t["harness_abort"],
+        "infra_fail": t["infra_fail"],   # 인프라 기동 실패로 시작도 못한 런 (조용히 드롭되지 않게 명시)
         "pass_rate": f"{t['pass']}/{completed}" if completed else "0/0",
         "exact_fix": sum(1 for m in results if m.get("exact_fix")),
         # 완주 런만 평균(중단은 부분 측정이라 제외)
@@ -164,10 +165,16 @@ def run_defect(defect_id: str, repeat: int, cfg: HarnessConfig, reset: bool) -> 
         try:
             if reset:
                 reset_infra(cfg.target_repo)
+        except Exception as e:  # docker 등 인프라 기동 실패 — 게이트에 도달조차 못함(≠게이트실패·≠중단)
+            m = {"run_dir": "-", "outcome": "infra_fail", "error": str(e)[:200]}
+            results.append(m)
+            print(f"[{defect_id}] run {i}: {m}", flush=True)
+            continue
+        try:
             m = run_once(i, defect_id, cfg.target_repo, cfg.runs_dir,
                          patch, d["task"], d["ground_truth"])
-        except Exception as e:  # 한 런의 실패가 실험 전체를 죽이지 않게
-            m = {"run_dir": "-", "gate_passed": False, "error": str(e)[:200]}
+        except Exception as e:  # setup/git 등 하네스 자체 오류 = 중단(한 런 실패가 실험 전체를 죽이지 않게)
+            m = {"run_dir": "-", "outcome": "harness_abort", "error": str(e)[:200]}
         results.append(m)
         print(f"[{defect_id}] run {i}: {m}", flush=True)
     out = cfg.runs_dir / f"experiment-{defect_id}.json"
@@ -207,11 +214,11 @@ def main() -> int:
     out = cfg.runs_dir / "experiment-matrix.json"
     out.write_text(json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")
     print("\n[matrix] === 결함 유형별 요약 ===", flush=True)
-    print(f"{'결함':6} {'통과':7} {'중단':5} {'정답':5} {'wall(s)':9} {'diff+':6}", flush=True)
+    print(f"{'결함':6} {'통과':7} {'중단':5} {'인프라':6} {'정답':5} {'wall(s)':9} {'diff+':6}", flush=True)
     for defect_id, s in summary.items():
         print(f"{defect_id:6} {s['pass_rate']:7} {s['harness_abort']}/{s['n']:<3} "
-              f"{s['exact_fix']}/{s['n']:<3} {str(s['avg_wall_s']):9} {str(s['avg_diff_added']):6}",
-              flush=True)
+              f"{s['infra_fail']}/{s['n']:<4} {s['exact_fix']}/{s['n']:<3} "
+              f"{str(s['avg_wall_s']):9} {str(s['avg_diff_added']):6}", flush=True)
     print(f"[matrix] 요약 저장: {out}", flush=True)
     return 0
 

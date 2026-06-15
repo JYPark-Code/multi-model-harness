@@ -10,11 +10,14 @@ from adapters.retry import Transient, with_retry
 
 class OpenAIClient(LLMClient):
 
-    def __init__(self, model: str, max_tokens: int = 4096, retries: int = 4):
-        self.client = AsyncOpenAI()
+    def __init__(self, model: str, max_tokens: int = 4096, retries: int = 4,
+                 timeout: float = 120.0):
+        # per-request 타임아웃 — 초과 시 SDK가 APITimeoutError → Transient로 재시도(무한 대기 차단)
+        self.client = AsyncOpenAI(timeout=timeout)
         self.model = model
         self.max_tokens = max_tokens
         self.retries = retries
+        self.timeout = timeout
 
     async def run(self, system, messages, tools=None) -> ModelResponse:
         oai_messages = [{"role": "system", "content": system}] + self._to_openai(messages)

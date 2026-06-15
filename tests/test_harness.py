@@ -189,3 +189,40 @@ def test_tool_loop_enforces_max_calls(tmp_path):
     with pytest.raises(RuntimeError, match="상한"):
         asyncio.run(run_tool_loop(implementer, "sys",
                                   [{"role": "user", "content": "go"}], executor, max_tool_calls=3))
+
+
+# --- 하네스 보강: per-call 타임아웃 + infra_fail 분류 (E3 run2 ~32분·docker 다운 교훈) ---
+
+def test_config_has_per_call_timeouts():
+    # degraded API가 한 런을 무한정 끌지 않게 하는 방파제 — 노브가 존재하고 기본값이 합리적인가
+    cfg = HarnessConfig()
+    assert cfg.planner_timeout_s == 120.0
+    assert cfg.critic_timeout_s == 300.0
+    assert cfg.implement_timeout_s == 900.0   # 1800→900: degraded 런이 30분까지 부풀던 것 차단
+
+
+def _load_repeat_l1():
+    import pathlib
+    import sys
+    scripts = str(pathlib.Path(__file__).resolve().parent.parent / "scripts")
+    if scripts not in sys.path:
+        sys.path.insert(0, scripts)
+    import repeat_l1
+    return repeat_l1
+
+
+def test_tally_classifies_infra_fail_separately():
+    # 핵심 회귀 방지: docker 등 인프라 실패 런이 조용히 드롭돼 pass_rate가 거짓이 되던 버그
+    rl1 = _load_repeat_l1()
+    results = [
+        {"outcome": "pass", "wall_s": 100.0, "diff_added": 1},
+        {"outcome": "gate_fail", "wall_s": 200.0, "diff_added": 5},
+        {"outcome": "infra_fail", "error": "docker compose down -v 실패"},
+        {"outcome": "infra_fail", "error": "docker compose down -v 실패"},
+        {"outcome": "harness_abort", "error": "git switch 실패"},
+    ]
+    t = rl1.tally_of(results)
+    assert t["n"] == 5
+    assert t["pass"] == 1 and t["gate_fail"] == 1 and t["harness_abort"] == 1
+    assert t["infra_fail"] == 2                  # 별도 집계 — 더 이상 조용히 사라지지 않는다
+    assert t["pass_rate"] == "1/2"               # 완주(pass+gate_fail)만 분모, infra_fail 제외

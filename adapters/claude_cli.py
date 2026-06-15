@@ -112,7 +112,7 @@ class ClaudeCLIAgent(_ClaudeCLIBase):
     1회 호출로 끝난다 (하네스의 tools 정의는 무시 — CLI 내장 도구를 쓴다).
     """
 
-    def __init__(self, target_repo: Path, model: str = "", timeout: float = 1800.0,
+    def __init__(self, target_repo: Path, model: str = "", timeout: float = 900.0,
                  retries: int = 4):
         super().__init__(model=model, timeout=timeout, cwd=target_repo, retries=retries)
 
