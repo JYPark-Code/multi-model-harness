@@ -19,11 +19,56 @@ spec이 충분하면 정확히 "AGREE"만 출력한다.
 아니면 고쳐야 할 점을 "- "로 시작하는 목록으로만 출력한다 (그 외 텍스트 금지)."""
 
 
+def _strip_fences(text: str) -> str:
+    return re.sub(r"^```(json)?|```$", "", text.strip(), flags=re.MULTILINE).strip()
+
+
+def _repair_json(text: str) -> str:
+    """모델이 흔히 내는 JSON 오류를 결정론적으로 보수한다 (모델 호출 없음).
+    1) object 경계만 추출 — 앞뒤 프로즈/잔여 펜스 제거.
+    2) JSON에 없는 백슬래시 escape를 리터럴화 — `\\d`·경로·정규식 등이 'Invalid \\escape'
+       크래시의 원인(E2 L1-3 중단). 이미 유효한 escape(`\\n`·`\\\\`·`\\"`·`\\uXXXX`)는 보존한다.
+    3) 트레일링 콤마 제거.
+    """
+    s, e = text.find("{"), text.rfind("}")
+    if 0 <= s < e:
+        text = text[s:e + 1]
+    # 유효 escape는 먼저 통째로 매칭해 그대로 두고(2글자 소비), 남은 단독 백슬래시만 이스케이프
+    text = re.sub(r'\\(["\\/bfnrtu])|\\',
+                  lambda m: m.group(0) if m.group(1) else "\\\\", text)
+    text = re.sub(r",(\s*[}\]])", r"\1", text)
+    return text
+
+
+def _loads_lenient(text: str) -> dict:
+    """엄격 파싱 우선, 실패 시 1회 보수 후 재시도. 그래도 실패하면 raise(호출부가 처리)."""
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        return json.loads(_repair_json(text))
+
+
 def _parse_spec_json(text: str, task: str, revision: int) -> Spec:
-    cleaned = re.sub(r"^```(json)?|```$", "", text.strip(), flags=re.MULTILINE).strip()
-    data = json.loads(cleaned)
+    data = _loads_lenient(_strip_fences(text))
     return Spec(task=task, summary=data["summary"], requirements=data["requirements"],
                 out_of_scope=data.get("out_of_scope", []), revision=revision)
+
+
+async def _generate_spec(generator: LLMClient, gen_messages: list[dict], task: str,
+                         turn: int, store: ArtifactStore) -> Spec:
+    """spec을 생성·파싱한다. 결정론적 보수로도 안 되면 오류를 모델에 돌려주고 JSON만 한 번
+    다시 받는다 — 잘림·완전 비JSON 같은 구조적 깨짐의 안전망(흔적: *_badjson.md)."""
+    resp = await generator.run(GENERATOR_SYSTEM, gen_messages)
+    try:
+        return _parse_spec_json(resp.text, task, turn)
+    except (json.JSONDecodeError, KeyError, TypeError) as e:
+        store.save(f"spec_rev{turn}_badjson.md", resp.text)
+        retry = await generator.run(GENERATOR_SYSTEM, gen_messages + [
+            {"role": "assistant", "content": resp.text},
+            {"role": "user", "content":
+                f"직전 출력이 유효한 JSON이 아니다 ({type(e).__name__}: {e}). "
+                "설명·코드펜스 없이 JSON 객체만 다시 출력하라."}])
+        return _parse_spec_json(retry.text, task, turn)
 
 
 async def run_planning(generator: LLMClient, critic: LLMClient, task: str,
@@ -32,8 +77,7 @@ async def run_planning(generator: LLMClient, critic: LLMClient, task: str,
     spec: Spec | None = None
 
     for turn in range(1, max_turns + 1):
-        resp = await generator.run(GENERATOR_SYSTEM, gen_messages)
-        spec = _parse_spec_json(resp.text, task, revision=turn)
+        spec = await _generate_spec(generator, gen_messages, task, turn, store)
         store.save(f"spec_rev{turn}.md", spec.to_markdown())
 
         verdict = await critic.run(
@@ -41,8 +85,8 @@ async def run_planning(generator: LLMClient, critic: LLMClient, task: str,
         if verdict.text.strip() == "AGREE":
             break
         store.save(f"critique_rev{turn}.md", verdict.text)
-        # 비평을 생성기의 다음 입력으로 — raw 대화가 아니라 구조화된 산출물 + 비평만 전달
-        gen_messages += [{"role": "assistant", "content": resp.text},
+        # 비평을 생성기의 다음 입력으로 — raw 대화가 아니라 구조화된 산출물(현재 spec) + 비평만 전달
+        gen_messages += [{"role": "assistant", "content": spec.to_markdown()},
                          {"role": "user", "content": f"비평을 반영해 spec JSON을 다시 작성하라:\n{verdict.text}"}]
     # 턴 상한 도달 시 마지막 spec으로 강제 진행 (수렴 실패를 숨기지 않고 산출물에 흔적이 남는다)
 

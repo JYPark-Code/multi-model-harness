@@ -13,7 +13,7 @@ from adapters.fake import FakeClient
 from artifacts.schema import ArtifactStore, Spec, TestReport
 from config import HarnessConfig
 from orchestrator.phases.development import run_development
-from orchestrator.phases.planning import run_planning
+from orchestrator.phases.planning import _parse_spec_json, _repair_json, run_planning
 from orchestrator.runner import run_pipeline
 from orchestrator.tools import LocalToolExecutor
 
@@ -58,6 +58,45 @@ def test_planning_incorporates_critique_then_agrees(tmp_path):
     # 비평이 생성기의 다음 입력에 들어갔는지 — 핸드오프 검증
     assert "기본 페이지 크기가 없다" in generator.calls[1]["messages"][-1]["content"]
     assert (store.run_dir / "critique_rev1.md").exists()
+
+
+def test_parse_spec_repairs_invalid_escape():
+    # E2 L1-3 중단 재현: requirement 문자열에 정규식 백슬래시(\d) — 엄격 파싱은 'Invalid \escape'
+    bad = '{"summary": "정규식 검증", "requirements": ["\\d+ 형식만 허용"], "out_of_scope": []}'
+    spec = _parse_spec_json(bad, "태스크", 1)
+    assert spec.requirements == ["\\d+ 형식만 허용"]   # 보수 후 백슬래시가 값에 보존됨
+
+
+def test_repair_preserves_valid_escapes():
+    # 이미 유효한 escape(\n·\"·이스케이프된 \\)는 보수가 손상하지 않아야 한다
+    valid = json.dumps({"summary": "줄1\n줄2 \"인용\" 경로 C:\\tmp\\d",
+                        "requirements": ["r"], "out_of_scope": []})
+    assert json.loads(_repair_json(valid)) == json.loads(valid)
+
+
+def test_parse_spec_strips_trailing_comma():
+    bad = '{"summary": "s", "requirements": ["a", "b",], "out_of_scope": [],}'
+    assert _parse_spec_json(bad, "t", 1).requirements == ["a", "b"]
+
+
+def test_parse_spec_extracts_json_from_prose():
+    bad = '여기 spec입니다:\n{"summary": "s", "requirements": ["a"], "out_of_scope": []}\n끝.'
+    assert _parse_spec_json(bad, "t", 1).summary == "s"
+
+
+def test_planning_self_repairs_on_unparseable_json(tmp_path):
+    # 보수로도 못 살리는 완전 비JSON → 자가 교정 재요청 → 유효 JSON으로 복구
+    generator = FakeClient([ModelResponse(text="죄송하지만 JSON을 출력할 수 없습니다"),
+                            ModelResponse(text=SPEC_JSON_V1)])
+    critic = FakeClient([ModelResponse(text="AGREE")])
+    store = ArtifactStore(tmp_path)
+
+    spec = asyncio.run(run_planning(generator, critic, "태스크", store, max_turns=4))
+
+    assert spec.requirements == ["페이지 파라미터"]
+    assert len(generator.calls) == 2                       # 초기 + 재요청
+    assert (store.run_dir / "spec_rev1_badjson.md").exists()
+    assert "유효한 JSON이 아니다" in generator.calls[1]["messages"][-1]["content"]
 
 
 def test_planning_stops_at_max_turns(tmp_path):
