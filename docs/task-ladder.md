@@ -91,11 +91,13 @@ hidden test는 주입 결함의 역방향이다: 태스크 시작 시엔 빠져 
 **기록 지표** (runs/에 자동 적재되도록 하네스에 추가할 것): 게이트 통과율, 첫 green까지 루프백 횟수,
 리뷰 왕복 횟수, tool call 수, 토큰 사용량(어댑터에서 수집), wall clock.
 
-결과는 `docs/experiments.md`에 표로 누적한다 — testbed의 benchmarks.md와 같은 위상의 산출물.
+결과는 [`docs/experiments.md`](experiments.md)에 표로 누적한다 — testbed의 benchmarks.md와 같은 위상의 산출물.
+첫 배치(E0: L1-5 베이스라인 5회)는 기록됨 — 완주 2/2 통과, 중단 3/5가 지배적 실패 모드.
 
 ## 하네스 측 선행 작업 (코드 생성 전 준비)
 
 - [ ] 토큰·비용 카운터를 어댑터에 추가 (응답 usage 수집 → run 메타에 기록)
 - [ ] run 요약 리포트 생성 (`runs/<id>/summary.md` — 단계별 턴 수·게이트 결과 자동 정리)
-- [ ] 레벨 1 결함 주입 패치 5종 작성 (`tasks/level1/*.patch`)
-- [ ] testbed에 `harness-run` 브랜치 운용 스크립트 (분기 → 실행 → diff 보존 → 리셋)
+- [ ] 어댑터 재시도/백오프 — E0에서 드러난 harness_abort 60%를 제거해야 표본이 신뢰 가능
+- [~] 레벨 1 결함 주입 패치 — L1-5 완료(`tasks/level1/L1-5.patch`), L1-1~L1-4 남음
+- [x] testbed `harness-run` 브랜치 운용 스크립트 — `scripts/repeat_l1.py` (분기→실행→diff 보존→리셋·지표 수집)

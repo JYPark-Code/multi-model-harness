@@ -31,13 +31,18 @@ def sh(args: list[str], check: bool = True) -> str:
 
 def collect_metrics(run_dir: Path, exit_code: int, wall_s: float, diff: str) -> dict:
     count = lambda pat: len(list(run_dir.glob(pat)))  # noqa: E731
-    passed = False
-    if (run_dir / "final_report.json").exists():
-        passed = json.loads((run_dir / "final_report.json").read_text(encoding="utf-8"))["passed"]
+    # final_report.json은 파이프라인이 끝까지 돈 경우에만 존재한다. 미처리 예외(API/인프라
+    # 오류)는 Python을 종료 코드 1로 떨어뜨려 게이트 실패와 구분되지 않으므로, final_report의
+    # 유무로 "하네스 중단"과 "게이트 판정"을 가른다 — 중단을 게이트 실패로 세면 통과율이 거짓이 된다.
+    final = run_dir / "final_report.json"
+    completed = final.exists()
+    passed = json.loads(final.read_text(encoding="utf-8"))["passed"] if completed else False
+    outcome = "pass" if passed else "gate_fail" if completed else "harness_abort"
     added = [l for l in diff.splitlines() if l.startswith("+") and not l.startswith("+++")]
     removed = [l for l in diff.splitlines() if l.startswith("-") and not l.startswith("---")]
     return {
         "run_dir": run_dir.name,
+        "outcome": outcome,            # pass | gate_fail | harness_abort
         "gate_passed": passed,
         "exit_code": exit_code,
         "wall_s": round(wall_s, 1),
@@ -70,7 +75,7 @@ def run_once(i: int, repo: Path, runs_dir: Path, patch: Path, task: str) -> dict
         diff = sh(["git", "-C", str(repo), "diff"])
         (run_dir / "fix.patch").write_text(diff, encoding="utf-8")  # 리셋 전 보존
         m = collect_metrics(run_dir, r.returncode, wall, diff)
-        if r.returncode not in (0, 1):  # 0=게이트 통과, 1=게이트 실패, 그 외=하네스 크래시
+        if m["outcome"] == "harness_abort":  # final_report 없음 = 게이트 도달 전 크래시; 진단용 로그 보존
             (run_dir / "crash.log").write_text(r.stdout + "\n" + r.stderr, encoding="utf-8")
         return m
     finally:
@@ -99,6 +104,11 @@ def main() -> int:
 
     out = cfg.runs_dir / "experiment-L1-5.json"
     out.write_text(json.dumps(results, ensure_ascii=False, indent=2), encoding="utf-8")
+    # 중단은 게이트 실패가 아니다 — 완주한 런만 통과율 분모로 센다
+    tally = {k: sum(1 for m in results if m.get("outcome") == k) for k in ("pass", "gate_fail", "harness_abort")}
+    completed = tally["pass"] + tally["gate_fail"]
+    rate = f"{tally['pass']}/{completed}" if completed else "0/0"
+    print(f"[repeat] 통과 {rate} (완주 기준) · 중단 {tally['harness_abort']}/{len(results)}", flush=True)
     print(f"[repeat] 결과 저장: {out}", flush=True)
     return 0
 
