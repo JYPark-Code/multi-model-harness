@@ -22,11 +22,28 @@ L1_5_TASK = ("gradlew test가 실패한다. 실패 테스트: OrderAsyncApiTest 
              "COMPLETED로 조회된다'. 원인을 찾아 최소 변경으로 고쳐라.")
 
 
-def sh(args: list[str], check: bool = True) -> str:
-    r = subprocess.run(args, capture_output=True, text=True, encoding="utf-8")
+def sh(args: list[str], check: bool = True, cwd: Path | None = None) -> str:
+    r = subprocess.run(args, capture_output=True, text=True, encoding="utf-8",
+                       cwd=str(cwd) if cwd else None)
     if check and r.returncode != 0:
         raise RuntimeError(f"{' '.join(args)} → {r.returncode}: {r.stderr[:300]}")
     return r.stdout
+
+
+def reset_infra(repo: Path) -> None:
+    """런 사이에 docker compose 볼륨을 비운다 — DB/Kafka 상태 누적이 게이트를 비결정적으로
+    만든다(영속 볼륨에 주문·정산 행이 쌓이면 SettlementBatchTest가 거짓 red를 낸다).
+    측정의 ground truth는 결정론적 게이트이므로, 매 런은 fresh 인프라에서 출발해야 한다."""
+    sh(["docker", "compose", "down", "-v"], cwd=repo)
+    sh(["docker", "compose", "up", "-d"], cwd=repo)
+    for _ in range(20):  # mysql 헬스 대기 (최대 60s) — 게이트의 첫 DB 연결 실패 방지
+        ping = subprocess.run(["docker", "exec", "tps-mysql", "mysqladmin",
+                               "ping", "-h", "localhost", "--silent"],
+                              capture_output=True)
+        if ping.returncode == 0:
+            return
+        time.sleep(3)
+    raise RuntimeError("mysql 헬스 대기 타임아웃 — 인프라 기동 실패")
 
 
 def collect_metrics(run_dir: Path, exit_code: int, wall_s: float, diff: str) -> dict:
@@ -89,6 +106,8 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--patch", type=Path, default=HARNESS / "tasks/level1/L1-5.patch")
     parser.add_argument("--repeat", type=int, default=5)
+    parser.add_argument("--reset-infra", action="store_true",
+                        help="런 사이에 docker compose 볼륨을 비워 게이트 결정론 보장")
     args = parser.parse_args()
 
     cfg = HarnessConfig()
@@ -96,6 +115,9 @@ def main() -> int:
     for i in range(1, args.repeat + 1):
         print(f"[repeat] run {i}/{args.repeat} 시작", flush=True)
         try:
+            if args.reset_infra:
+                print("[repeat] 인프라 리셋 (down -v → up)", flush=True)
+                reset_infra(cfg.target_repo)
             m = run_once(i, cfg.target_repo, cfg.runs_dir, args.patch.resolve(), L1_5_TASK)
         except Exception as e:  # 한 런의 실패가 실험 전체를 죽이지 않게
             m = {"run_dir": "-", "gate_passed": False, "error": str(e)[:200]}
