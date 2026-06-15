@@ -88,7 +88,8 @@ def run_once(i: int, repo: Path, runs_dir: Path, patch: Path, task: str) -> dict
                            cwd=HARNESS, capture_output=True, text=True, encoding="utf-8")
         wall = time.monotonic() - t0
 
-        run_dir = max(runs_dir.iterdir(), key=lambda p: p.name)
+        # 디렉터리만 후보로 — runs/에 섞인 파일(experiment json·로그)을 집지 않게 (이름순 'r'>'2')
+        run_dir = max((p for p in runs_dir.iterdir() if p.is_dir()), key=lambda p: p.name)
         diff = sh(["git", "-C", str(repo), "diff"])
         (run_dir / "fix.patch").write_text(diff, encoding="utf-8")  # 리셋 전 보존
         m = collect_metrics(run_dir, r.returncode, wall, diff)
@@ -111,6 +112,11 @@ def main() -> int:
     args = parser.parse_args()
 
     cfg = HarnessConfig()
+    # reset_infra ↔ 비캐시 게이트는 한 쌍이다: DB를 비워도 Gradle이 테스트를 up-to-date로
+    # 스킵하면(수정이 msa와 동일할 때) 리셋이 무의미하고 거짓 green이 난다. cleanTest 강제 필요.
+    if args.reset_infra and "cleanTest" not in cfg.test_command:
+        print("[repeat] 경고: --reset-infra인데 게이트에 cleanTest가 없다 — Gradle 캐시가 "
+              "테스트를 스킵할 수 있다. HARNESS_TEST_COMMAND에 cleanTest를 넣어라.", flush=True)
     results = []
     for i in range(1, args.repeat + 1):
         print(f"[repeat] run {i}/{args.repeat} 시작", flush=True)
