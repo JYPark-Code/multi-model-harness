@@ -18,6 +18,7 @@ import shutil
 from pathlib import Path
 
 from adapters.base import LLMClient, ModelResponse
+from adapters.retry import Transient, with_retry
 
 # 구현 위임 시 허용 도구 — Bash 제외(테스트 실행은 검증 게이트의 몫, 결정론 유지)
 AGENT_TOOLS = "Read,Write,Edit,Glob,Grep"
@@ -46,7 +47,7 @@ def parse_cli_json(stdout: str) -> str:
 class _ClaudeCLIBase(LLMClient):
 
     def __init__(self, model: str = "", timeout: float = 300.0,
-                 cwd: Path | None = None):
+                 cwd: Path | None = None, retries: int = 4):
         exe = shutil.which("claude")
         if not exe:
             raise FileNotFoundError(
@@ -55,12 +56,19 @@ class _ClaudeCLIBase(LLMClient):
         self.model = model      # 빈 값이면 CLI 기본 모델 (구독 플랜이 결정)
         self.timeout = timeout
         self.cwd = cwd
+        self.retries = retries
 
     def vendor_tools(self, tools):
         # CLI는 외부 tool 정의를 받지 않는다(자체 내장 도구만) — 변환할 것이 없다
         return tools
 
     async def _invoke(self, system: str, prompt: str, extra_args: list[str]) -> str:
+        # CLI 호출 실패(타임아웃·비정상 종료·is_error)는 외부 프로세스 변덕이라 일시로 본다 —
+        # 영구 오류(잘못된 인자 등)도 재시도 소진 후 같은 메시지로 표면화되므로 안전하다
+        return await with_retry(lambda: self._attempt(system, prompt, extra_args),
+                                attempts=self.retries)
+
+    async def _attempt(self, system: str, prompt: str, extra_args: list[str]) -> str:
         args = [self.exe, "-p", "--output-format", "json",
                 "--no-session-persistence", "--system-prompt", system, *extra_args]
         if self.model:
@@ -75,11 +83,14 @@ class _ClaudeCLIBase(LLMClient):
                 proc.communicate(prompt.encode("utf-8")), self.timeout)
         except asyncio.TimeoutError:
             proc.kill()
-            raise RuntimeError(f"claude CLI 타임아웃 ({self.timeout}s)")
+            raise Transient(f"claude CLI 타임아웃 ({self.timeout}s)")
         if proc.returncode != 0:
-            raise RuntimeError(
+            raise Transient(
                 f"claude CLI 종료 코드 {proc.returncode}: {err.decode('utf-8', 'replace')[:500]}")
-        return parse_cli_json(out.decode("utf-8"))
+        try:
+            return parse_cli_json(out.decode("utf-8"))
+        except RuntimeError as e:   # is_error 응답(overloaded 등) — 다시 시도해 볼 가치가 있다
+            raise Transient(str(e)) from e
 
 
 class ClaudeCLIClient(_ClaudeCLIBase):
@@ -101,8 +112,9 @@ class ClaudeCLIAgent(_ClaudeCLIBase):
     1회 호출로 끝난다 (하네스의 tools 정의는 무시 — CLI 내장 도구를 쓴다).
     """
 
-    def __init__(self, target_repo: Path, model: str = "", timeout: float = 1800.0):
-        super().__init__(model=model, timeout=timeout, cwd=target_repo)
+    def __init__(self, target_repo: Path, model: str = "", timeout: float = 1800.0,
+                 retries: int = 4):
+        super().__init__(model=model, timeout=timeout, cwd=target_repo, retries=retries)
 
     async def run(self, system, messages, tools=None) -> ModelResponse:
         text = await self._invoke(system, transcript(messages), [

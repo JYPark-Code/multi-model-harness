@@ -5,11 +5,33 @@ import shutil
 
 import pytest
 
+from adapters import claude_cli
 from adapters.claude_cli import (AGENT_TOOLS, ClaudeCLIAgent, ClaudeCLIClient,
                                  parse_cli_json, transcript)
+from adapters.retry import Transient
 
 requires_cli = pytest.mark.skipif(shutil.which("claude") is None,
                                   reason="claude CLI 미설치")
+
+
+class FakeProc:
+    """서브프로세스 스텁 — _attempt의 실패 분류만 보기 위해 communicate 결과를 박아둔다."""
+    def __init__(self, returncode, stdout=b"", stderr=b""):
+        self.returncode = returncode
+        self._out = (stdout, stderr)
+
+    async def communicate(self, data=None):
+        return self._out
+
+    def kill(self):
+        pass
+
+
+def _patch_cli(monkeypatch, proc):
+    monkeypatch.setattr(claude_cli.shutil, "which", lambda _: "claude")  # 생성자 통과
+    async def fake_exec(*a, **k):
+        return proc
+    monkeypatch.setattr(claude_cli.asyncio, "create_subprocess_exec", fake_exec)
 
 
 def test_transcript_serializes_user_assistant():
@@ -35,6 +57,30 @@ def test_parse_cli_json_raises_on_error():
                       "is_error": True})
     with pytest.raises(RuntimeError):
         parse_cli_json(out)
+
+
+def test_attempt_wraps_nonzero_exit_as_transient(monkeypatch):
+    _patch_cli(monkeypatch, FakeProc(1, b"", b"boom"))
+    client = ClaudeCLIClient()
+    with pytest.raises(Transient):
+        asyncio.run(client._attempt("sys", "p", ["--tools", ""]))
+
+
+def test_attempt_wraps_is_error_response_as_transient(monkeypatch):
+    body = json.dumps({"type": "result", "subtype": "error_during_execution",
+                       "is_error": True}).encode("utf-8")
+    _patch_cli(monkeypatch, FakeProc(0, body, b""))
+    client = ClaudeCLIClient()
+    with pytest.raises(Transient):
+        asyncio.run(client._attempt("sys", "p", ["--tools", ""]))
+
+
+def test_attempt_returns_result_on_success(monkeypatch):
+    body = json.dumps({"type": "result", "is_error": False,
+                       "result": "PONG"}).encode("utf-8")
+    _patch_cli(monkeypatch, FakeProc(0, body, b""))
+    client = ClaudeCLIClient()
+    assert asyncio.run(client._attempt("sys", "p", ["--tools", ""])) == "PONG"
 
 
 @requires_cli
