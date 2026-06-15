@@ -1,0 +1,13 @@
+diff --git a/backoffice/src/main/java/com/jypark/tps1000/backoffice/settlement/SettlementBatchConfig.java b/backoffice/src/main/java/com/jypark/tps1000/backoffice/settlement/SettlementBatchConfig.java
+index 39cfb41..8bccce3 100644
+--- a/backoffice/src/main/java/com/jypark/tps1000/backoffice/settlement/SettlementBatchConfig.java
++++ b/backoffice/src/main/java/com/jypark/tps1000/backoffice/settlement/SettlementBatchConfig.java
+@@ -104,7 +104,7 @@ public class SettlementBatchConfig {
+             @Value("#{jobParameters['month']}") String month) {
+         return sales -> replicaRepository.findById(sales.productId())
+                 .map(replica -> Settlement.of(month, replica.getProductId(), replica.getName(),
+-                        sales.totalQuantity(), replica.getPrice() * sales.totalQuantity()))
++                        sales.totalQuantity(), replica.getPrice() + sales.totalQuantity()))
+                 .orElse(null);
+     }
+ 

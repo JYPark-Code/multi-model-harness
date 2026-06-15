@@ -1,0 +1,15 @@
+diff --git a/order/src/main/java/com/jypark/tps1000/order/OrderEventConsumer.java b/order/src/main/java/com/jypark/tps1000/order/OrderEventConsumer.java
+index 7773e08..82dbe79 100644
+--- a/order/src/main/java/com/jypark/tps1000/order/OrderEventConsumer.java
++++ b/order/src/main/java/com/jypark/tps1000/order/OrderEventConsumer.java
+@@ -40,10 +40,6 @@ public class OrderEventConsumer {
+ 
+         for (int i = 0; i < events.size(); i++) {
+             OrderCreatedEvent event = events.get(i);
+-            if (!processed.add(event.orderKey())) {
+-                log.info("중복 주문 이벤트 스킵 orderKey={}", event.orderKey());
+-                continue;
+-            }
+             try {
+                 notificationService.notifyOrderAccepted(event);
+             } catch (Exception ex) {

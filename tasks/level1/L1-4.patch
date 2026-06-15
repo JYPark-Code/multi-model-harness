@@ -1,0 +1,13 @@
+diff --git a/backoffice/src/main/java/com/jypark/tps1000/backoffice/config/SecurityConfig.java b/backoffice/src/main/java/com/jypark/tps1000/backoffice/config/SecurityConfig.java
+index 0bd6cca..3faca4c 100644
+--- a/backoffice/src/main/java/com/jypark/tps1000/backoffice/config/SecurityConfig.java
++++ b/backoffice/src/main/java/com/jypark/tps1000/backoffice/config/SecurityConfig.java
+@@ -44,8 +44,6 @@ public class SecurityConfig {
+                         .anyRequest().authenticated())
+                 // 미인증=401, 권한 부족=403을 명시적으로 분리 (기본 entry point는 둘 다 403으로 뭉개질 수 있음)
+                 .exceptionHandling(ex -> ex
+-                        .authenticationEntryPoint((request, response, e) ->
+-                                response.sendError(HttpServletResponse.SC_UNAUTHORIZED))
+                         .accessDeniedHandler((request, response, e) ->
+                                 response.sendError(HttpServletResponse.SC_FORBIDDEN)))
+                 .addFilterBefore(jwtAuthenticationFilter, UsernamePasswordAuthenticationFilter.class);

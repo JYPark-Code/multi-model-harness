@@ -1,0 +1,12 @@
+diff --git a/product/src/main/java/com/jypark/tps1000/product/cache/ProductCacheLayer.java b/product/src/main/java/com/jypark/tps1000/product/cache/ProductCacheLayer.java
+index 0ff23d1..b38b132 100644
+--- a/product/src/main/java/com/jypark/tps1000/product/cache/ProductCacheLayer.java
++++ b/product/src/main/java/com/jypark/tps1000/product/cache/ProductCacheLayer.java
+@@ -69,7 +69,6 @@ public class ProductCacheLayer implements MessageListener {
+             // L2에 옛값이 남으면 L2 TTL(10분)까지 불일치 가능 — 데모 범위에서 수용 (decisions.md)
+             log.error("redis evict failed: productId={}", productId, e);
+         }
+-        l1.invalidate(productId); // 자기 인스턴스는 pub/sub 왕복을 기다리지 않고 즉시 제거
+     }
+ 
+     /** pub/sub 수신: 다른 인스턴스(또는 자신)의 쓰기 → 로컬 L1 제거. */

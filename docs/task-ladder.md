@@ -31,11 +31,19 @@
 |---|---|---|---|
 | L1-1 | `OrderEventConsumer.consume()`의 배치 내 중복 제거(`processed.add` 검사) 제거 | OrderAsyncApiTest 멱등성 | 실패 로그에서 중복 저장을 읽어내야 함 |
 | L1-2 | `ProductCacheLayer.evict()`에서 로컬 `l1.invalidate()` 호출 제거 | ProductCacheTest 무효화 검증 | 캐시 계층 간 상호작용 이해 필요 |
-| L1-3 | `SettlementBatchConfig`에서 clearStep을 잡 구조에서 제외 | SettlementBatchTest 재실행 멱등 | 두 번째 실행에서만 실패 — 원인 추적이 한 단계 깊음 |
+| L1-3 | `settlementItemProcessor`의 금액 계산 `price * qty`를 `price + qty`로 변조 | SettlementBatchTest 금액 집계 | 연산자 한 글자 — 집계 정확성, L1-5와 같은 최소 수렴 결 |
 | L1-4 | `SecurityConfig`의 authenticationEntryPoint(401) 제거 | AuthRbacTest 401/403 분리 | 프레임워크 기본 동작(403 뭉개짐) 지식 필요 |
 | L1-5 | `Order.complete()` 호출을 컨슈머에서 제거 (상태가 CREATED로 남음) | OrderAsyncApiTest 상태 검증 | diff가 한 줄 — 최소 변경 수렴 측정용 |
 
-주입 자동화: 결함별 `git apply` 가능한 역패치를 `tasks/level1/*.patch`로 보관하면 반복 실험이 결정론적이 된다.
+> L1-3 정정: 원안(clearStep 제외)은 **무효 주입**이었다 — 검증 결과 green. Settlement에
+> `(month, product_id)` unique 제약이 있어 clearStep 없이 재집계해도 2차 INSERT가 제약 위반으로
+> 청크 롤백되고, `jobLauncher.run`이 잡 실패를 throw하지 않아 엔드포인트는 200을 반환한다. 테스트는
+> 재실행 시 HTTP 200·행 수만 보므로 멱등성이 unique 제약으로 이미 보장돼 clearStep이 redundant였다.
+> 그래서 실제로 테스트를 깨는 금액 계산 결함으로 교체했다.
+
+주입 자동화: 결함별 `git apply` 가능한 역패치를 `tasks/level1/*.patch`로 보관한다 (L1-1~L1-5 작성 완료).
+**전 패치 검증됨**: clean msa에 `git apply` 가능 + 대상 테스트를 실제로 red로 만드는 것까지 확인
+(인프라 리셋 후 `:app:test --tests <대상>` 실행, exit≠0 + 단언 실패 위치 확인).
 
 ## 레벨 2 — 동작 보존 리팩터링
 
@@ -101,5 +109,5 @@ E1 재측정에서 5/5 통과·중단 0/5·전 런 최소 수렴(diff ≤3줄)�
 - [ ] run 요약 리포트 생성 (`runs/<id>/summary.md` — 단계별 턴 수·게이트 결과 자동 정리)
 - [x] 어댑터 재시도/백오프 — `adapters/retry.py` (지수 백오프+지터, 일시/영구 오류 분류).
       OpenAI·Claude(API/CLI) 전 어댑터 적용 → E0의 harness_abort 60% 제거 대상
-- [~] 레벨 1 결함 주입 패치 — L1-5 완료(`tasks/level1/L1-5.patch`), L1-1~L1-4 남음
+- [x] 레벨 1 결함 주입 패치 5종 완성 (`tasks/level1/L1-1~L1-5.patch`) — 전부 red 검증
 - [x] testbed `harness-run` 브랜치 운용 스크립트 — `scripts/repeat_l1.py` (분기→실행→diff 보존→리셋·지표 수집)
