@@ -23,7 +23,7 @@ class HarnessConfig:
     cli_model: str = os.environ.get("HARNESS_CLI_MODEL", "")  # 빈 값 = CLI 기본 모델
 
     # 티키타카가 안 새게 막는 방파제 (Constraint design)
-    max_planning_turns: int = 4      # 생성↔비평 왕복 상한
+    max_planning_turns: int = int(os.environ.get("HARNESS_MAX_PLANNING_TURNS", "4"))  # 생성↔비평 왕복 상한 (E3 ablation: 1=기획 1샷)
     max_review_turns: int = 3        # 구현↔리뷰 왕복 상한
     max_dev_loops: int = 2           # 테스트 실패 → 개발 루프백 상한
     max_tool_calls: int = 50         # tool loop 폭주 방지
