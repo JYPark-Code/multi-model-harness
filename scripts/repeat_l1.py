@@ -64,12 +64,16 @@ def sh(args: list[str], check: bool = True, cwd: Path | None = None) -> str:
     return r.stdout
 
 
-def reset_infra(repo: Path) -> None:
+def reset_infra(repo: Path, services: list[str] | None = None) -> None:
     """런 사이에 docker compose 볼륨을 비운다 — DB/Kafka 상태 누적이 게이트를 비결정적으로
     만든다(영속 볼륨에 주문·정산 행이 쌓이면 SettlementBatchTest가 거짓 red를 낸다).
-    측정의 ground truth는 결정론적 게이트이므로, 매 런은 fresh 인프라에서 출발해야 한다."""
+    측정의 ground truth는 결정론적 게이트이므로, 매 런은 fresh 인프라에서 출발해야 한다.
+
+    services를 주면 그 서비스만 up한다(down -v는 항상 전체). 관측 전용 컨테이너가 호스트
+    포트를 다른 dev 서버와 다투면 compose up이 exit 1로 떨어져 reset 전체가 실패하므로,
+    게이트 필수 서비스만 띄워 그 충돌과 무관하게 한다. None(기본)이면 기존처럼 전체 up."""
     sh(["docker", "compose", "down", "-v"], cwd=repo)
-    sh(["docker", "compose", "up", "-d"], cwd=repo)
+    sh(["docker", "compose", "up", "-d", *(services or [])], cwd=repo)
     for _ in range(20):  # mysql 헬스 대기 (최대 60s) — 게이트의 첫 DB 연결 실패 방지
         ping = subprocess.run(["docker", "exec", "tps-mysql", "mysqladmin",
                                "ping", "-h", "localhost", "--silent"],

@@ -29,6 +29,11 @@ from evals.gate import run_gate             # noqa: E402  (인수 게이트 = �
 from evals.structural_guard import build_guard  # noqa: E402
 from repeat_l1 import reset_infra, sh        # noqa: E402  (제네릭 프리미티브 재사용)
 
+# 게이트 필수 인프라만 기동한다. grafana(관측 전용)는 호스트 포트 3000을 다른 프로젝트의
+# dev 서버와 다투다 'docker compose up'을 exit 1로 떨어뜨려 reset을 통째로 infra_fail로
+# 만든다 — 게이트(mysql/redis/kafka)엔 불필요하므로 제외한다. prometheus는 충돌 없어 포함.
+GATE_SERVICES = ["mysql", "redis", "kafka", "prometheus"]
+
 # 리팩터링 태스크: 주입 패치가 없고, spec(태스크 문자열) + 구조 가드로 정의된다.
 TASKS = {
     "L2-2": {
@@ -295,7 +300,7 @@ def run_task(task_id: str, repeat: int, cfg: HarnessConfig, reset: bool,
         print(f"[{task_id}] run {i}/{repeat} 시작", flush=True)
         try:
             if reset:
-                reset_infra(cfg.target_repo)
+                reset_infra(cfg.target_repo, GATE_SERVICES)
         except Exception as e:  # docker 등 인프라 기동 실패 — 게이트에 도달조차 못함(≠게이트실패·≠중단)
             m = {"run_dir": "-", "outcome": "infra_fail", "error": str(e)[:200]}
             results.append(m)
