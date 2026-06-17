@@ -254,6 +254,47 @@
 
 ---
 
+## E3 — 비평 ablation: 기획 비평 왕복이 통과율·수렴을 올리나?
+
+> 노브: `HARNESS_MAX_PLANNING_TURNS` (commit `8f8105e`). **control** = 기본 4(생성↔비평 왕복 허용),
+> **ablation** = 1(기획 1샷 — 비평 후 재기획 없음). 대상은 **L1-5**(비동기 COMPLETED 결함,
+> ground truth = `order.complete()` 한 줄) — E1과 같은 태스크라 수렴 기준선이 선명하다.
+> ⚠️ 1차 시도(2026-06-15)는 **Docker Desktop 중단으로 무효**였다(ablation 0/5·control 유효 1런).
+> 그때의 ~32분 degraded 폭주 런이 per-call 타임아웃(commit `8101e1e`) 도입을 촉발했다. 아래는
+> docker 정상·`reset_infra` grafana 픽스·타임아웃 적용 후 **재측정**(2026-06-17).
+
+- **조건**: GPT-5.1 기획·리뷰 + Claude(CLI) 비평·구현 (E1·E2 동일). 게이트 `cleanTest` + `--reset-infra`.
+- **반복**: arm당 5회. **드라이버**: `repeat_l1.py --defects L1-5 --repeat 5 --reset-infra`,
+  ablation은 `HARNESS_MAX_PLANNING_TURNS=1`로 띄운 별도 프로세스(config가 import 시점에 노브를 읽음).
+- **실행일**: 2026-06-17
+
+| arm | 통과 | 정답(exact) | dev루프 | spec_rev 평균 | 비평 평균 | diff+ 평균 | wall(s) 평균 |
+|---|---|---|---|---|---|---|---|
+| control (비평 왕복, turns=4) | 5/5 | 5/5 | 1 | 2.2 | 1.2 | 2.2 | 193.9 |
+| ablation (기획 1샷, turns=1) | 5/5 | 5/5 | 1 | **1.0** | **0.6** | **1.0** | 175.7 |
+
+(arm당 상세: `runs/experiment-E3-control.json` · `runs/experiment-E3-ablation.json`. 양 arm 10런 전부
+완주 — infra_fail·중단 0.)
+
+### 읽어낼 것
+
+1. **L1-5에선 기획 비평이 통과율·정답을 못 올린다 — 둘 다 이미 천장(5/5).** 비평 왕복을 떼도
+   게이트 통과 5/5·exact_fix 5/5·dev 루프 1로 동일. 이 태스크에서 비평 루프는 **순수 오버헤드**다.
+2. **오히려 ablation이 더 타이트하게 수렴한다.** ablation은 5런 전부 diff +1(정답 한 줄 그대로),
+   control은 +1~4(평균 2.2). 기획을 더 굴려 spec를 정교화할수록 요구가 살짝 붙어 변경이 커지는
+   경향 — ground truth가 1줄인 결함에선 "더 많은 기획"이 최소 수렴을 **느슨하게** 만든다.
+3. **기획 비용은 control이 ~2배.** spec_rev 2.2 vs 1.0, 비평 1.2 vs 0.6. 같은 결과(5/5 정답)를
+   ablation이 절반의 기획 왕복으로 낸다 — 이 태스크 한정, 비평 루프는 토큰·턴만 쓰고 값을 안 더한다.
+4. **wall은 신호 아님.** control 153~275 / ablation 112~350 — arm 내 편차가 arm 간 차이보다 크다.
+   ablation 170444의 349.8초는 degraded-API 단일 런이고, per-call 타임아웃이 1차의 32분 폭주를 막아
+   완주시켰다(무효였던 1차의 핵심 교훈이 재측정에서 작동 확인). 평균차(193.9 vs 175.7)는 노이즈.
+5. **이 결론은 L1-5에 국한된다 — 비평의 가치는 모호성에서 나온다.** L1-5는 사다리에서 ground truth가
+   가장 선명한 단일 줄 결함이라 기획을 더 굴려 얻을 게 거의 없다. 비평 왕복이 통과율·수렴을 **실제로
+   올리는지**는 모호성이 큰 상위 태스크(L2 리팩터링·L3 기능, 또는 다중 라인 L1-1 dedup)에서 같은
+   ablation을 돌려야 드러난다 — 자연스러운 후속 배치.
+
+---
+
 ## 다음 배치 (예정)
 
 - [x] 어댑터 재시도/백오프 (`adapters/retry.py`) + L1-5 재측정(E1) — 중단 0/5 확인 완료
@@ -262,5 +303,7 @@
       콤마·프로즈) + 1회 자가 교정 재요청. `Invalid \escape` 크래시(E2 1건) 차단, 단위 테스트 5개
 - [x] L3 기능 배치(대조군) — order-cancel 오구현 5/5(Flyway 누락) vs quantity-cap 정상 5/5(입력 검증).
       같은 하네스가 함정 유무로 정반대 결과 → 오구현은 역량 부족이 아니라 특정 함정에 국한됨을 분리
-- [ ] E3 비평 ablation: critic 왕복 있음 vs 기획 1샷 (게이트 통과율·수렴 비교)
+- [x] E3 비평 ablation(L1-5) — control vs 기획 1샷 둘 다 5/5 통과·정답. 비평은 통과율·정답 못 올리고
+      ablation이 오히려 더 타이트 수렴(+1) → L1-5에선 순수 오버헤드. 비평 가치는 상위 레벨에서 재측정
+- [ ] E3-상위: 같은 ablation을 L2 리팩터링·L3 기능(모호성 큰 태스크)에서 — 비평이 거기선 값을 더하나
 - [ ] L4: 모델이 인수 테스트까지 작성 — order-cancel류 영속화 누락이 자가검증에서 잡히는지
