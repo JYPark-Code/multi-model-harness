@@ -260,7 +260,7 @@ def run_task(task_id: str, repeat: int, cfg: HarnessConfig, reset: bool,
         except Exception as e:  # setup/git 등 하네스 자체 오류 = 중단(한 런 실패가 실험 전체를 죽이지 않게)
             m = {"run_dir": "-", "outcome": "harness_abort", "error": str(e)[:200]}
         results.append(m)
-        marker = "  ⚠ 회귀green·인수red" if m.get("regress_green_accept_red") else ""
+        marker = "  (!) 회귀green·인수red" if m.get("regress_green_accept_red") else ""
         print(f"[{task_id}] run {i}: {m}{marker}", flush=True)
     out = cfg.runs_dir / f"experiment-{task_id}.json"
     out.write_text(json.dumps(results, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -270,6 +270,13 @@ def run_task(task_id: str, repeat: int, cfg: HarnessConfig, reset: bool,
 
 
 def main() -> int:
+    # Windows 콘솔 기본 코드페이지(cp949)는 '—'·'⚠' 등 비한글 글리프를 인코딩 못해 print에서
+    # 크래시한다. 하네스는 산출물을 전부 utf-8로 쓰므로 stdout/stderr도 utf-8로 맞춘다.
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(encoding="utf-8", errors="replace")
+        except (AttributeError, ValueError):
+            pass  # 재구성 불가한 스트림(예: 파이프 래퍼)이면 그냥 둔다
     parser = argparse.ArgumentParser()
     parser.add_argument("--tasks", default=",".join(TASKS), help="콤마 구분 태스크 id")
     parser.add_argument("--repeat", type=int, default=5)
@@ -320,13 +327,13 @@ def main() -> int:
         print(f"{'태스크':16} {'회귀통과':9} {'인수통과':9} {'feature_ok':11} "
               f"{'모델테스트':9} {'회귀G·인수R':11} {'중단':5} {'인프라':6}", flush=True)
         for task_id, s in feature.items():
-            flag = "  ⚠" if s["regress_green_accept_red"] else ""
+            flag = "  (!)" if s["regress_green_accept_red"] else ""
             print(f"{task_id:16} {s['regression_pass']}/{s['n']:<7} {s['acceptance_pass']}/{s['n']:<7} "
                   f"{s['feature_ok']}/{s['n']:<9} {str(s['avg_model_tests']):<9} "
                   f"{s['regress_green_accept_red']}/{s['n']:<9}{flag} "
                   f"{s['harness_abort']}/{s['n']:<3} {s['infra_fail']}/{s['n']:<4}", flush=True)
         print(f"[task] 요약 저장: {out}", flush=True)
-        print("[task] ⚠ 표시 = 회귀 green인데 인수 red — 동작은 보존, 기능은 오구현(이 모드의 핵심 신호).",
+        print("[task] (!) 표시 = 회귀 green인데 인수 red — 동작은 보존, 기능은 오구현(이 모드의 핵심 신호).",
               flush=True)
     return 0
 
