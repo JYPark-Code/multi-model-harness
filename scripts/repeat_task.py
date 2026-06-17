@@ -53,6 +53,16 @@ TASKS = {
                            "OrderQuantityCapAcceptanceTest.java",
         "acceptance_filter": "OrderQuantityCapAcceptanceTest",   # --acceptance-isolate용 클래스명
     },
+    # 상태 기반 취소 — CREATED만 취소 가능(200), COMPLETED/FAILED/이미취소는 409, 미존재 404.
+    # 409 의미론은 naive 구현이 500/400/200으로 틀리기 쉬워 '오구현' 변별력이 높다.
+    "L3-order-cancel": {
+        "kind": "feature",
+        "feature": "tasks/level3/order-cancel.feature.md",
+        "acceptance_src": "tasks/level3/order-cancel.acceptance.java",
+        "acceptance_dest": "app/src/test/java/com/jypark/tps1000/order/"
+                           "OrderCancelAcceptanceTest.java",
+        "acceptance_filter": "OrderCancelAcceptanceTest",
+    },
 }
 
 
