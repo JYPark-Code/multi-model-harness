@@ -17,6 +17,7 @@ import shutil
 import subprocess
 import sys
 import time
+import xml.etree.ElementTree as ET
 from pathlib import Path
 
 HARNESS = Path(__file__).resolve().parent.parent
@@ -116,9 +117,31 @@ def run_once(i: int, task_id: str, task: dict, repo: Path, runs_dir: Path) -> di
         sh(["git", "-C", str(repo), "branch", "-D", "harness-run"])
 
 
+def parse_acceptance_results(repo: Path, class_simple_name: str) -> dict:
+    """gradle JUnit XML에서 인수 클래스의 결과'만' 추출한다 (L3의 결정론적 무결성 축).
+
+    전체 스위트 exit code에 acceptance_pass를 기대면 두 가지가 위조 가능해진다:
+      1) 인수 테스트가 실제로 실행 안 됐는데(패키지 오류·필터·컴파일 제외) 스위트는 green
+         → 거짓 통과. structural_guard가 L2의 no-op을 잡듯, 여기선 '인수가 실행됐나'를 본다.
+      2) 무관한 다른 테스트가 flaky로 red → acceptance_pass=False로 오염
+         → '회귀G·인수R'(오구현) 신호가 거짓 양성이 된다.
+    그래서 인수 클래스의 JUnit XML(cleanTest가 매 게이트마다 새로 씀)만 보고 판정한다.
+    """
+    matches = list(repo.glob(f"**/build/test-results/test/TEST-*{class_simple_name}.xml"))
+    agg = {"executed": False, "tests": 0, "failures": 0, "errors": 0, "skipped": 0,
+           "report_files": [str(p.relative_to(repo)).replace("\\", "/") for p in matches]}
+    for m in matches:
+        root = ET.fromstring(m.read_text(encoding="utf-8"))
+        for k in ("tests", "failures", "errors", "skipped"):
+            agg[k] += int(root.get(k, "0"))
+    agg["executed"] = (agg["tests"] - agg["skipped"]) > 0   # 실제로 1개 이상 돌았나
+    agg["pass"] = agg["executed"] and agg["failures"] == 0 and agg["errors"] == 0
+    return agg
+
+
 def collect_feature_metrics(run_dir: Path, wall_s: float, diff: str, status: str,
                             regression_pass: bool, completed: bool,
-                            acceptance_pass: bool | None) -> dict:
+                            acc: dict | None, full_suite_pass: bool | None) -> dict:
     count = lambda pat: len(list(run_dir.glob(pat)))  # noqa: E731
     added = [l for l in diff.splitlines() if l.startswith("+") and not l.startswith("+++")]
     removed = [l for l in diff.splitlines() if l.startswith("-") and not l.startswith("---")]
@@ -128,13 +151,23 @@ def collect_feature_metrics(run_dir: Path, wall_s: float, diff: str, status: str
                             if l.strip() and "src/test/" in l.replace("\\", "/"))
     # outcome: 회귀 게이트가 끝까지 돌았나(완주) 기준. harness_abort면 인수 게이트는 건너뛴다.
     outcome = ("regression_pass" if regression_pass else "gate_fail") if completed else "harness_abort"
-    # 핵심 신호: 회귀는 green인데 인수는 red = "동작은 안 깨뜨렸지만 기능을 틀리게 구현".
-    regress_green_accept_red = bool(regression_pass and acceptance_pass is False)
+    # 인수 판정은 클래스 XML에서만(전체 exit code 아님) — 거짓 통과·flaky 오염 차단.
+    acceptance_executed = acc["executed"] if acc else None
+    acceptance_pass = acc["pass"] if acc else None
+    # 핵심 신호: 회귀 green인데 인수 red = "동작은 안 깨뜨렸지만 기능을 틀리게 구현".
+    # 단, 인수가 '실제로 실행됐을 때만' 유효 — 미실행은 측정 무결성 문제지 모델 오구현이 아니다.
+    regress_green_accept_red = bool(regression_pass and acceptance_executed and not acceptance_pass)
     return {
         "run_dir": run_dir.name,
         "outcome": outcome,                 # regression_pass | gate_fail | harness_abort
         "regression_pass": regression_pass,  # 3번: 25 회귀 green (모델이 반복한 게이트)
-        "acceptance_pass": acceptance_pass,  # 5번: 숨긴 인수 게이트 ← 진짜 ground truth (중단=None)
+        "acceptance_pass": acceptance_pass,  # 5번: 인수 클래스 XML 기준 ← 진짜 ground truth (중단=None)
+        # 인수가 실제로 실행됐나 — False면 거짓 통과 위험(측정 무효), None은 게이트 미도달(중단)
+        "acceptance_executed": acceptance_executed,
+        "acceptance_tests": acc["tests"] if acc else None,
+        "acceptance_failures": (acc["failures"] + acc["errors"]) if acc else None,
+        # 전체 스위트 결과(인수 주입 후 재실행) — 회귀 재확인용 별도 기록
+        "full_suite_pass": full_suite_pass,
         "feature_ok": bool(regression_pass and acceptance_pass),
         "regress_green_accept_red": regress_green_accept_red,
         "model_wrote_tests": model_wrote_tests,
@@ -176,7 +209,7 @@ def run_once_feature(i: int, task_id: str, task: dict, cfg: HarnessConfig,
             (run_dir / "crash.log").write_text(r.stdout + "\n" + r.stderr, encoding="utf-8")
 
         # 3) 인수 게이트 — 모델 종료 '후'에만 주입, 1회, 피드백 없음. 중단 런은 건너뛴다.
-        acceptance_pass = None
+        acc, full_suite_pass = None, None
         if completed:
             dest = repo / task["acceptance_dest"]
             dest.parent.mkdir(parents=True, exist_ok=True)
@@ -187,10 +220,14 @@ def run_once_feature(i: int, task_id: str, task: dict, cfg: HarnessConfig,
             report = run_gate(cmd, repo, timeout=900)
             (run_dir / "acceptance_report.json").write_text(
                 report.model_dump_json(indent=2), encoding="utf-8")
-            acceptance_pass = report.passed
+            full_suite_pass = report.passed
+            # exit code가 아니라 인수 클래스의 JUnit XML로 판정 (clean -fd 전에 읽어야 한다)
+            acc = parse_acceptance_results(repo, task["acceptance_filter"])
+            (run_dir / "acceptance_results.json").write_text(
+                json.dumps(acc, ensure_ascii=False, indent=2), encoding="utf-8")
 
         return collect_feature_metrics(run_dir, wall, diff, status,
-                                       regression_pass, completed, acceptance_pass)
+                                       regression_pass, completed, acc, full_suite_pass)
     finally:
         # clean -fd가 모델 신규 파일 + 주입한 인수 테스트를 함께 제거한다.
         sh(["git", "-C", str(repo), "checkout", "--", "."])
@@ -209,6 +246,8 @@ def tally_feature(results: list[dict]) -> dict:
         "feature_ok": n(lambda m: m.get("feature_ok")),
         # 회귀 green · 인수 red — 이 모드가 잡으려는 핵심 신호(오구현)
         "regress_green_accept_red": n(lambda m: m.get("regress_green_accept_red")),
+        # 인수 게이트는 돌았는데 인수 테스트가 실제로 실행 안 됨 = 측정 무효(거짓 통과 위험)
+        "acceptance_not_executed": n(lambda m: m.get("acceptance_executed") is False),
         "harness_abort": n(lambda m: m.get("outcome") == "harness_abort"),
         "infra_fail": n(lambda m: m.get("outcome") == "infra_fail"),
         "avg_model_tests": round(sum(m["model_wrote_tests"] for m in done) / len(done), 1)
@@ -260,7 +299,9 @@ def run_task(task_id: str, repeat: int, cfg: HarnessConfig, reset: bool,
         except Exception as e:  # setup/git 등 하네스 자체 오류 = 중단(한 런 실패가 실험 전체를 죽이지 않게)
             m = {"run_dir": "-", "outcome": "harness_abort", "error": str(e)[:200]}
         results.append(m)
-        marker = "  (!) 회귀green·인수red" if m.get("regress_green_accept_red") else ""
+        marker = ("  (!) 회귀green·인수red" if m.get("regress_green_accept_red")
+                  else "  (!) 인수 미실행(측정무효)" if m.get("acceptance_executed") is False
+                  else "")
         print(f"[{task_id}] run {i}: {m}{marker}", flush=True)
     out = cfg.runs_dir / f"experiment-{task_id}.json"
     out.write_text(json.dumps(results, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -327,14 +368,18 @@ def main() -> int:
         print(f"{'태스크':16} {'회귀통과':9} {'인수통과':9} {'feature_ok':11} "
               f"{'모델테스트':9} {'회귀G·인수R':11} {'중단':5} {'인프라':6}", flush=True)
         for task_id, s in feature.items():
-            flag = "  (!)" if s["regress_green_accept_red"] else ""
+            flag = ("  (!)오구현" if s["regress_green_accept_red"]
+                    else "  (!)인수미실행" if s["acceptance_not_executed"] else "")
             print(f"{task_id:16} {s['regression_pass']}/{s['n']:<7} {s['acceptance_pass']}/{s['n']:<7} "
                   f"{s['feature_ok']}/{s['n']:<9} {str(s['avg_model_tests']):<9} "
                   f"{s['regress_green_accept_red']}/{s['n']:<9}{flag} "
                   f"{s['harness_abort']}/{s['n']:<3} {s['infra_fail']}/{s['n']:<4}", flush=True)
         print(f"[task] 요약 저장: {out}", flush=True)
-        print("[task] (!) 표시 = 회귀 green인데 인수 red — 동작은 보존, 기능은 오구현(이 모드의 핵심 신호).",
+        print("[task] (!)오구현 = 회귀 green인데 인수 red — 동작은 보존, 기능은 오구현(이 모드의 핵심 신호).",
               flush=True)
+        if any(s["acceptance_not_executed"] for s in feature.values()):
+            print("[task] (!)인수미실행 = 인수 테스트가 실제로 안 돌았다(거짓 통과 위험) — 패키지/필터/컴파일 점검.",
+                  flush=True)
     return 0
 
 
